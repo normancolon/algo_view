@@ -1,0 +1,439 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © algo_view
+// Auth N Colon 
+//@version=5
+indicator(shorttitle="GOLD", title = "GOLD", overlay=true, max_labels_count = 500, max_lines_count = 500, max_boxes_count = 500, max_bars_back = 500)
+
+// Multi-timeframe and price input
+pricetype       = input.source(defval = close, title="Price source for the moving averages", group = "Moving Averages")
+useCurrentRes   = input.bool(defval = true, title="Use the current timeframe as resolution?", group = "Moving Averages")
+resCustom       = input.timeframe(title="Use a different timeframe? Then uncheck the box above.", defval="60", group = "Moving Averages")
+res             = useCurrentRes ? timeframe.period : resCustom
+price           = request.security(syminfo.tickerid, res, pricetype, lookahead = barmerge.lookahead_on)
+
+// MA period input
+shortperiod     = input.int(defval = 50, title="Short Period", group = "Moving Averages")
+longperiod      = input.int(defval = 100, title="Long Period", group = "Moving Averages")
+
+// MA calculation
+smoothinput = input.int(2, minval=1, maxval=4, title="MA Calculation: (1 = SMA), (2 = EMA), (3 = WMA), (4 = Linear)", group = "Moving Averages")
+short = switch smoothinput 
+    1 => ta.sma(price, shortperiod)
+    2 => ta.ema(price, shortperiod)
+    3 => ta.wma(price, shortperiod)
+    4 => ta.linreg(price, shortperiod,0)
+    
+long = switch smoothinput 
+    1 => ta.sma(price, longperiod)
+    2 => ta.ema(price, longperiod)
+    3 => ta.wma(price, longperiod)
+    4 => ta.linreg(price, longperiod,0)
+    
+
+// MA trend direction color
+shortcolor = short > short[1] ? color.lime : short < short[1] ? color.red : color.blue
+longcolor = long > long[1] ? color.lime : long < long[1] ? color.red : color.blue
+
+// MA output
+MA1 = plot(short, title="Short Period Moving Average", style = plot.style_linebr, linewidth = 2, color = shortcolor )
+MA2 = plot(long, title="Long Period Moving Average", style = plot.style_linebr, linewidth = 4, color=longcolor)
+fill(MA1, MA2, color = color.new(color.silver, 50))
+
+// MA trend bar color
+TrendingUp() => short > long 
+TrendingDown() => short < long 
+
+// MA cross alert
+MAcrossing = ta.cross(short, long) ? short : na
+
+periods = input.int(defval = 26, minval = 10, maxval = 200)
+upper   = ta.highest(periods)
+lower  = ta.lowest(periods)
+average   = math.avg(upper, lower)
+averageColor = short > long? color.green : color.red
+
+// Data Entry / Configuration
+//--MOVING AVERAGES
+ma_2        = false
+ma_type_b   = "3"
+ma_len_b    = 8
+ma_src_b    = close
+grosorb     = 1
+ma_1        = false
+ma_type     = "3"
+ma_len      = 20
+ma_src      = close
+grosor      = 1
+
+// Entry type
+entryType = input.string(defval = "Break of support/resistance", options = ["Break of support/resistance", "Wick"])
+
+// tp sl inputs
+showTP1  = input.bool(true, "Take Profit 1", "Show TP1", group = "LABELS")
+showTP2  = input.bool(true, "Take Profit 2", "Show TP2", group = "LABELS")
+showTP3  = input.bool(true, "Take Profit 3", "Show TP3", group = "LABELS")
+showTP4  = input.bool(true, "Take Profit 4", "Show TP4", group = "LABELS")
+showSL   = input.bool(true, "Stop Loss", "Show Stop Loss", group = "LABELS")
+showPE   = input.bool(true, "Entry Price", "Show Entry Price", group = "LABELS")
+
+pipTP1       = input.float(20, "Pips Profit 1 (10 - 20)", 1, 50, 1,        group = "DEFINE SL AND TP")
+pipTP2       = input.float(50, "Pips Profit 2 (20 - 50)", 21, 100, 1,        group = "DEFINE SL AND TP")
+pipTP3       = input.float(100, "Pips Profit 3 (50 - 100)", 51, 150, 1,     group = "DEFINE SL AND TP")
+pipTP4       = input.float(150, "Pips Profit 4 (100 - 150)", 101, 300, 1,   group = "DEFINE SL AND TP")
+pipSL        = input.float(30, "Stop Loss", 10, 100 , 10,                     group = "DEFINE SL AND TP")
+SLatCandleStart   = input.bool(defval = false, title = "SL at start of candle", group = "DEFINE SL AND TP")
+
+// Support and resistances and watermark
+showTicker   = input.bool(true, "Forex Pair", "Show traded pair", group = "TRADED PAIR")
+watermarkColor     = input.color(color.new(#5b5d64, 0), "Forex Pair Color", "Watermark color", group = "WATERMARK")
+watermark       = input.string("BOT - OWENS", "Watermark", group = "WATERMARK")
+
+// Variables
+var ntp1 = 0.0
+var ntp2 = 0.0
+var ntp3 = 0.0
+var ntp4 = 0.0
+var nsl = 0.0
+
+// MOVING AVERAGES FUNCTIONS
+variant_supersmoother(src, len) =>
+    a1 = math.exp(-1.414*3.14159 / len)
+    b1 = 2*a1*math.cos(1.414*3.14159 / len)
+    c2 = b1
+    c3 = (-a1)*a1
+    c1 = 1 - c2 - c3
+    v9 = 0.0
+    v9 := c1*(src + nz(src[1])) / 2 + c2*nz(v9[1]) + c3*nz(v9[2])
+    v9
+
+variant_smoothed(src, len) =>
+    v5 = 0.0
+    v5 := na(v5[1]) ? ta.sma(src, len) : (v5[1] * (len - 1) + src) / len
+    v5
+
+variant(type, src, len) =>
+    type=="2" ? ta.ema(src, len) : type=="3" ? variant_smoothed(src, len) : type=="1" ? ta.sma(src, len) : na
+
+// MOVING AVERAGES
+ma_series = variant(ma_type, ma_src, ma_len)  // slow moving average
+ma_series_b = variant(ma_type_b, ma_src_b, ma_len_b) // fast moving average
+
+// Determine the number of decimals for pip calculations
+f_nDecimals(_in) => 
+    price  = math.round_to_mintick(open)
+    var n   = int(price), s = str.tostring(_in), p = str.pos(s, ".")
+    n       := na(str.tonumber(s)) ? int(na) : na(p) ? 0 : str.length(str.substring(s, p + 1))
+price1     = math.round_to_mintick(open)
+decimal     = f_nDecimals(price1)
+decimal1    = f_nDecimals(price1[1])
+decimal2    = f_nDecimals(price1[2])
+decimals   = math.max(decimal, decimal1, decimal2)
+
+// Determine the size of 10 pips according to the decimals
+value1pip       = decimals == 0 ? 1 : decimals == 1 ? 1 : decimals == 2 ? 0.1 : decimals == 3 ? 0.01 : decimals == 4 ? 0.0001 : 0.00001
+
+// ATR
+atrPeriod   = 45
+factor      = 10
+
+// Variables
+[supertrend, direction1] = ta.supertrend(factor, atrPeriod)
+bodyMiddle = plot((open + close) / 2, display=display.none, editable = false)
+
+var entry     = 0.0
+var sl          = 0.0
+var tp1         = 0.0
+var tp2         = 0.0
+var tp3         = 0.0
+var tp4         = 0.0
+var repeattp1   = 0.0
+var repeattp2   = 0.0
+var repeattp3   = 0.0
+var repeattp4   = 0.0
+var candle_entry = 0
+var repeatsl    = 0
+
+ema200 = ta.ema(close, 200)
+trend   = direction1 < 0 ? "Bullish" : "Bearish"
+timeframe_str = str.tostring(timeframe.period)
+
+if direction1 < 0 and direction1[1] > 0 and barstate.isconfirmed
+    
+    entry := entryType == "Break of support/resistance" ?  math.round_to_mintick(supertrend[1]) : math.round_to_mintick(high)
+    sl      := SLatCandleStart == true ? math.round_to_mintick(open-(value1pip*5)) : math.round_to_mintick(entry - (value1pip * pipSL)) 
+    tp1     := math.round_to_mintick(entry + (value1pip * pipTP1))
+    tp2     := math.round_to_mintick(entry + (value1pip * pipTP2))
+    tp3     := math.round_to_mintick(entry + (value1pip * pipTP3))
+    tp4     := math.round_to_mintick(entry + (value1pip * pipTP4))
+    
+    repeattp1 := 0
+    repeattp2 := 0
+    repeattp3 := 0
+    repeattp4 := 0
+    repeatsl  := 0
+    label.new(bar_index, math.min(long, short), text = entry > ema200 ? "Smart \nBuy" : "BUY", style = label.style_label_up, color = color.green, size = size.normal, textcolor = color.white)
+    buy_type = entry > ema200 ? "Smart \nBuy" : "Buy"
+    alert(message = buy_type + "<b> " + syminfo.ticker + "</b>\n" + "Entry: <b>" + str.tostring(entry) + "</b>\n" + "TP1: <b>" + str.tostring(tp1) + "</b>\n" + "TP2: <b>" + str.tostring(tp2) + "</b>\n" + "TP3: <b>" + str.tostring(tp3) + "</b>\n" + "TP4: <b>" + str.tostring(tp4) + "</b>\n" + "SL: <b>" + str.tostring(sl) + "</b>" + "\nTimeframe: <b>" + timeframe_str + "</b>")
+
+if direction1 > 0 and direction1[1] < 0 and barstate.isconfirmed
+    
+    entry := entryType == "Break of support/resistance" ? math.round_to_mintick(supertrend[1]) : math.round_to_mintick(low)
+    sl      := SLatCandleStart == true ? math.round_to_mintick(open+(value1pip*5)) : math.round_to_mintick(entry + (value1pip * pipSL)) 
+    tp1     := math.round_to_mintick(entry - (value1pip * pipTP1))
+    tp2     := math.round_to_mintick(entry - (value1pip * pipTP2))
+    tp3     := math.round_to_mintick(entry - (value1pip * pipTP3))
+    tp4     := math.round_to_mintick(entry - (value1pip * pipTP4))
+
+    repeattp1 := 0
+    repeattp2 := 0
+    repeattp3 := 0
+    repeattp4 := 0
+    repeatsl  := 0
+    label.new(bar_index, math.max(long, short), text = entry < ema200 ? "Smart \nSell" : "SELL", style = label.style_label_down, color = color.red, size = size.normal, textcolor = color.white)
+    sell_type = entry < ema200 ? "Smart \nSell" : "Sell"
+    alert(message = sell_type + "<b> " + syminfo.ticker + "</b>\n" + "Entry: <b>" + str.tostring(entry) + "</b>\n" + "TP1: <b>" + str.tostring(tp1) + "</b>\n" + "TP2: <b>" + str.tostring(tp2) + "</b>\n" + "TP3: <b>" + str.tostring(tp3) + "</b>\n" + "TP4: <b>" + str.tostring(tp4) + "</b>\n" + "SL: <b>" + str.tostring(sl) + "</b>" + "\nTimeframe: <b>" + timeframe_str + "</b>")
+
+entry_label = showPE ?  label.new((bar_index+10), entry, text = "Entry: " + str.tostring(entry), size = size.small, color = color.orange, style = label.style_label_left, textcolor = color.white, textalign = text.align_left) : na
+sl_label      = showSL ?  label.new((bar_index+10), sl, text = "Stop Loss: " + str.tostring(sl), size = size.small, color = color.red, style = label.style_label_left, textcolor = color.white, textalign = text.align_left) : na
+tp1_label     = showTP1 ? label.new((bar_index+10), tp1, text = "TP1: " + str.tostring(tp1), size = size.small, color = color.green, style = label.style_label_left, textcolor = color.white, textalign = text.align_left) : na
+tp2_label     = showTP2 ? label.new((bar_index+10), tp2, text = "TP2: " + str.tostring(tp2), size = size.small, color = color.green, style = label.style_label_left, textcolor = color.white, textalign = text.align_left) : na
+tp3_label     = showTP3 ? label.new((bar_index+10), tp3, text = "TP3: " + str.tostring(tp3), size = size.small, color = color.green, style = label.style_label_left, textcolor = color.white, textalign = text.align_left) : na
+tp4_label     = showTP4 ? label.new((bar_index+10), tp4, text = "TP4: " + str.tostring(tp4), size = size.small, color = color.green, style = label.style_label_left, textcolor = color.white, textalign = text.align_left) : na
+
+label.delete(entry_label[1])
+label.delete(sl_label[1])
+label.delete(tp1_label[1])
+label.delete(tp2_label[1])
+label.delete(tp3_label[1])
+label.delete(tp4_label[1])
+
+if trend == "Bullish" and close > tp1 and repeattp1 == 0 and showTP1
+    label.new(bar_index, high, text = "TP 1 \n reached", size = size.tiny, textcolor = color.green, style = label.style_none)
+    repeattp1 := 1
+    alert(message = "TP1 ACHIEVED: <b>" + syminfo.ticker + "</b>\n" + "Entry: <b>" + str.tostring(entry) + "</b>\n" + "TP1: <b>" + str.tostring(tp1)+"</b>"+ "\nTimeframe: <b>" + timeframe_str + "</b>")
+
+if trend == "Bullish" and close > tp2 and repeattp2 == 0 and showTP2
+    label.new(bar_index, high, text = "TP 2 \n reached", size = size.tiny, textcolor = color.green, style = label.style_none)
+    repeattp2 := 1
+    alert(message = "TP2 ACHIEVED: <b>" + syminfo.ticker + "</b>\n" + "Entry: <b>" + str.tostring(entry) + "</b>\n" + "TP2: <b>" + str.tostring(tp2)+"</b>"+ "\nTimeframe: <b>" + timeframe_str + "</b>")
+
+if trend == "Bullish" and close > tp3 and repeattp3 == 0 and showTP3
+    label.new(bar_index, high, text = "TP 3 \n reached", size = size.tiny, textcolor = color.green, style = label.style_none)
+    repeattp3 := 1
+    alert(message = "TP3 ACHIEVED: <b>" + syminfo.ticker + "</b>\n" + "Entry: <b>" + str.tostring(entry) + "</b>\n" + "TP3: <b>" + str.tostring(tp3)+"</b>" + "\nTimeframe: <b>" + timeframe_str + "</b>")
+
+if trend == "Bullish" and close > tp4 and repeattp4 == 0 and showTP4
+    label.new(bar_index, high, text = "TP 4 \n reached", size = size.tiny, textcolor = color.green, style = label.style_none)
+    repeattp4 := 1
+    alert(message = "TP4 ACHIEVED: <b>" + syminfo.ticker + "</b>\n" + "Entry: <b>" + str.tostring(entry) + "</b>\n" + "TP4: <b>" + str.tostring(tp4)+"</b>" + "\nTimeframe: <b>" + timeframe_str + "</b>")
+
+if trend == "Bullish" and close < sl and showSL and repeatsl == 0
+    label.new(bar_index, high, text = "SL\n reached", size = size.tiny, textcolor = color.green, style = label.style_none)
+    alert(message = "SL REACHED: <b>" + syminfo.ticker + "</b>\n" + "Exit: <b>" + str.tostring(sl) + "</b>" + "\nTimeframe: <b>" + timeframe_str + "</b>")
+    repeatsl := 1
+
+if trend == "Bearish" and close < tp1 and repeattp1 == 0 and showTP1
+    label.new(bar_index, low, text = "TP 1 \n reached", size = size.tiny, textcolor = color.red, style = label.style_none)
+    repeattp1 := 1
+    alert(message = "TP1 ACHIEVED: <b>" + syminfo.ticker + "</b>\n" + "Entry: <b>" + str.tostring(entry) + "</b>\n" + "TP1: <b>" + str.tostring(tp1)+"</b>" + "\nTimeframe: <b>" + timeframe_str + "</b>")
+
+if trend == "Bearish" and close < tp2 and repeattp2 == 0 and showTP2
+    label.new(bar_index, low, text = "TP 2 \n reached", size = size.tiny, textcolor = color.red, style = label.style_none)
+    repeattp2 := 1
+    alert(message = "TP2 ACHIEVED: <b>" + syminfo.ticker + "</b>\n" + "Entry: <b>" + str.tostring(entry) + "</b>\n" + "TP2: <b>" + str.tostring(tp2)+"</b>" + "\nTimeframe: <b>" + timeframe_str + "</b>")
+
+if trend == "Bearish" and close < tp3 and repeattp3 == 0 and showTP3
+    label.new(bar_index, low, text = "TP 3 \n reached", size = size.tiny, textcolor = color.red, style = label.style_none)
+    repeattp3 := 1
+    alert(message = "TP3 ACHIEVED: <b>" + syminfo.ticker + "</b>\n" + "Entry: <b>" + str.tostring(entry) + "</b>\n" + "TP3: <b>" + str.tostring(tp3)+"</b>" + "\nTimeframe: <b>" + timeframe_str + "</b>")
+
+if trend == "Bearish" and close < tp4 and repeattp4 == 0 and showTP4
+    label.new(bar_index, low, text = "TP 4 \n reached", size = size.tiny, textcolor = color.red, style = label.style_none)
+    repeattp4 := 1
+    alert(message = "TP4 ACHIEVED: <b>" + syminfo.ticker + "</b>\n" + "Entry: <b>" + str.tostring(entry) + "</b>\n" + "TP4: <b>" + str.tostring(tp4)+"</b>" + "\nTimeframe: <b>" + timeframe_str + "</b>")
+
+if trend == "Bearish" and close > sl and showSL and repeatsl == 0
+    label.new(bar_index, low, text = "SL\n reached", size = size.tiny, textcolor = color.red, style = label.style_none)
+    alert(message = "SL REACHED: <b>" + syminfo.ticker + "</b>\n" + "Exit: <b>" + str.tostring(sl) + "</b>" + "\nTimeframe: <b>" + timeframe_str + "</b>")
+    repeatsl := 1
+
+bullish_cross = open < ma_series_b and close > ma_series_b and barstate.isconfirmed
+bearish_cross = open > ma_series_b and close < ma_series_b and barstate.isconfirmed
+
+candle_entry := ta.barssince(direction1 != direction1[1])
+
+entry_line = showPE ? line.new(bar_index[candle_entry], entry, bar_index + 10, entry, color = color.orange, style = line.style_dashed, width = 2) : na
+line.delete(entry_line[1])
+sl_line = showSL ? line.new(bar_index[candle_entry], sl, bar_index + 10, sl, color = color.red, width = 2) : na 
+line.delete(sl_line[1])
+tp1_line = showTP1 ? line.new(bar_index[candle_entry], tp1, bar_index + 10, tp1, color = color.green, style = line.style_dotted, width = 2) : na
+line.delete(tp1_line[1])
+tp2_line = showTP2 ? line.new(bar_index[candle_entry], tp2, bar_index + 10, tp2, color = color.green, style = line.style_dotted, width = 2) : na
+line.delete(tp2_line[1])
+tp3_line = showTP3 ? line.new(bar_index[candle_entry], tp3, bar_index + 10, tp3, color = color.green, style = line.style_dotted, width = 2) : na
+line.delete(tp3_line[1])
+tp4_line = showTP4 ? line.new(bar_index[candle_entry], tp4, bar_index + 10, tp4, color = color.green, style = line.style_dotted, width = 2) : na
+line.delete(tp4_line[1])
+
+ticker_table = table.new(position = position.middle_center, columns = 1, rows = 1, bgcolor = color.new(color.black, 100), border_width = 0)
+if showTicker 
+    table.cell(table_id = ticker_table, column = 0, row = 0, text = str.tostring(syminfo.ticker) + "\n" + watermark , text_size = size.huge, text_color = watermarkColor)
+
+plot(ma_1? ma_series    : na, color = close > ma_series? color.green : color.red, style = plot.style_line, linewidth = grosor, title="Slow Moving Average", display = display.pane, editable = false)
+plot(ma_2? ma_series_b  : na, color = close > ma_series_b? color.green : color.red, style = plot.style_line, linewidth = grosorb, title="Fast Moving Average", display = display.pane, editable = false)
+
+// Inputs for support and resistance
+sr_periods            = input.int     (defval = 4, minval = 2, maxval = 20, step = 1,  title = "SR periods for current timeframe", group = "Supports and Resistances")
+k                     = input.float   (defval = 0, minval=0, step=.1,                title = "SR angle for current timeframe", group = "Supports and Resistances")
+
+// Support and resistance variables
+var line   line_up             = na
+var line   line_down           = na
+var label  last_break_up       = na
+var label  last_break_down     = na
+
+// Variables for sr of tempo1
+show                        = true
+type                        = close
+ceiling                     = 0.0
+floor                       = 0.0
+slope_ph                    = 0.0    
+slope_pl                    = 0.0
+n                           = bar_index
+
+// Calculation of sr for tempo1
+ph                          = ta.pivothigh(close, sr_periods, sr_periods)
+pl                          = ta.pivotlow(close, sr_periods, sr_periods)
+slope                       = ta.atr(sr_periods)/sr_periods*k
+slope_ph                    := ph ? slope : slope_ph[1]
+slope_pl                    := pl ? slope : slope_pl[1]
+ceiling                     := ph ? ph : ceiling[1] - slope_ph
+floor                       := pl ? pl : floor[1] + slope_pl
+single_upper                = 0
+single_lower                = 0
+single_upper                := type[sr_periods] > ceiling ? 0 : ph ? 1 : single_upper[1]
+single_lower                := type[sr_periods] <  floor? 0 : pl ? 1 : single_lower[1]
+upper_breakout              = single_upper[1] and type[sr_periods] > ceiling and (show ? type > type[sr_periods] : 1)
+lower_breakout              = single_lower[1] and type[sr_periods] < floor and (show ? type < type[sr_periods] : 1)
+if ph[1]
+    line.delete(line_up[1])
+    label.delete(last_break_up[1])
+    line_up := line.new(n-sr_periods-1,ph[1],n-sr_periods, ceiling,color=#26a69a, extend=extend.right,style=line.style_dashed)
+
+if pl[1]
+    line.delete(line_down[1])
+    label.delete(last_break_down[1])
+    line_down := line.new(n-sr_periods-1,pl[1],n-sr_periods, floor,color=#ef5350, extend=extend.right,style=line.style_dashed)
+
+if ta.crossover(close, ceiling) and barstate.isconfirmed
+    label.delete(last_break_up[1])
+    last_break_up := label.new(n, low ,'Long',color=color.green, textcolor=color.white,style=label.style_label_up,size=size.small)
+
+if ta.crossunder(close, floor) and barstate.isconfirmed
+    label.delete(last_break_down[1])
+    last_break_down := label.new(n, high,'Short',color=#ef5350, textcolor=color.white,style=label.style_label_down,size=size.small)
+
+plotshape(upper_breakout and barstate.isconfirmed? low[sr_periods]  : na,"Upper Break",shape.labelup,location.absolute, color.new(color.green, 70), -sr_periods, text="Long",textcolor=color.white,size=size.tiny)
+plotshape(lower_breakout and barstate.isconfirmed? high[sr_periods] : na,"Lower Break",shape.labeldown,location.absolute, color.new(color.red, 70), -sr_periods, text="Short",textcolor=color.white,size=size.tiny)
+
+// Elliot wave and safe buy zone
+var support         = 0.0
+var slau            = 0.0
+var candle_count  = 0
+var candle_count2 = 0
+var candle_count3 = 0
+var maximum          = 0.0
+var minimum          = 1000000.0
+var line_count1  = 0
+var line_count2  = 0
+candle_count      += 1
+var fibo_start      = 0.0
+var fibo_end         = 0.0
+var fibo_length       = 0.0
+var max_value    = 0.0
+var max_index   = 0
+var min_value    = 1000000.0
+var min_index   = 0
+var pivot_text     = "Retracement"
+var line_count   = 0
+
+//----------------------------------------INPUTS------------------------------------------------------
+strategy          = "Normal"
+increment           = input.float(defval = 0.01, maxval = 0.05, minval = 0.01, step = 0.01, title = "Define the precision for impulse changes:", group = "Strategy")
+
+// ELLIOT
+show_elliot2     = false
+show_elliot      = input.bool(defval = true, title = "Show maximum and minimum points in impulses", group = "Impulse Lines")
+
+
+timeframe        = timeframe.period == "1" and strategy == "Normal"? "5" : timeframe.period == "5" and strategy == "Normal"? "15" : timeframe.period == "15" and strategy == "Normal"? "30" : timeframe.period == "30" and strategy == "Normal"? "60" : timeframe.period == "60" and strategy == "Normal"? "120" : timeframe.period == "1" and strategy == "Conservative"? "15" : timeframe.period == "5" and strategy == "Conservative"? "30" : timeframe.period == "15" and strategy == "Conservative"? "60" : timeframe.period == "30" and strategy == "Conservative"? "120" : timeframe.period == "60" and strategy == "Conservative"? "240" : "D"
+
+// PSAR
+start               = 0.02
+maximum             = 0.2
+out                 = request.security(syminfo.tickerid, timeframe, ta.sar(start, increment, maximum))
+
+//-----------------------------FUNCTIONS-----------------------------
+
+// DIRECTION AND DEFINITION OF SAFE ZONE, SL, ENTRY
+direction           = close > out? "up" : "down"
+support            := direction != direction[1]? out[1] : support
+slau               := direction == "up" and direction != direction[1]? low[1] : direction == "down" and direction != direction[1]? high[1] : slau
+change_direction   = direction != direction[1] and barstate.isconfirmed
+
+// SQZY BANDS
+exp_channels = true
+esma(source, length)=>
+    s = ta.sma(source, length)
+    e = ta.ema(source, length)
+    exp_channels ? e : s
+ma = esma(close, 20)
+range_ma     = ta.atr(10)
+upper2       = ma + range_ma * 2.0
+lower       = ma - range_ma * 2.0
+basis       = ta.sma(close, 20)
+dev         = 1.5 * ta.stdev(close, 20)
+upperBB     = basis + dev
+lowerBB     = basis - dev
+sqzma       = ta.sma(close, 20)
+range_ma     = ta.sma(ta.tr, 20)
+upperKC     = sqzma + range_ma * 1.5
+lowerKC     = sqzma - range_ma * 1.5
+sqzOn       = (lowerBB > lowerKC) and (upperBB < upperKC)
+sqzOff      = (lowerBB < lowerKC) and (upperBB > upperKC)
+noSqz       = (sqzOn == false) and (sqzOff == false)
+val         = ta.linreg(close  -  math.avg(math.avg(ta.highest(high, 20), ta.lowest(low, 20)), ta.sma(close,20)), 20,0)
+
+// ELLIOT
+if change_direction and barstate.isconfirmed and direction[1] == "up"
+    for index = 1 to candle_count
+        if high[index] > max_value
+            max_value   := high[index]
+            max_index  := index
+            line_count2 := index
+    fibo_start  := low[line_count1+candle_count]
+    fibo_end     := max_value
+    fibo_length   := max_value - fibo_start
+    color_circle = max_value > upper? color.new(color.red, 50) : color.new(color.gray, 50)
+    circle1 = show_elliot?    label.new(bar_index[max_index], max_value, style = label.style_circle, color = color_circle, size = size.tiny)  : na
+    
+    candle_count  := 0
+    line_count1  := 0
+
+if change_direction and barstate.isconfirmed and direction[1] == "down"
+    for index = 1 to candle_count
+        if low[index] < min_value
+            min_value    := low[index]
+            min_index   := index
+            line_count1  := index
+    fibo_start  := high[line_count2+candle_count]
+    fibo_end     := min_value
+    fibo_length   := fibo_start - fibo_end
+    color_circle2 = min_value < lower? color.new(color.blue, 50) : color.new(color.gray, 50)
+    circle2 = show_elliot?    label.new(bar_index[min_index], min_value, style = label.style_circle,  color = color_circle2, size = size.tiny) : na
+    
+    candle_count := 0
+    line_count2 := 0
+
+max_value        := 0.0
+min_value        := 1000000.0
