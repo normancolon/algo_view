@@ -1,7 +1,6 @@
-The provided Pine Script code implements a trading indicator for use on the TradingView platform. Here’s a breakdown of its primary functionalities and features:
 
 ### 1. **Indicator Setup**
-   - **Title and Overlay**: The indicator is named "GOLD" and overlays directly onto the trading chart, allowing you to see both the price action and the indicator’s outputs simultaneously.
+   - **Title and Overlay**: The indicator is named "algo_view" and overlays directly onto the trading chart, allowing you to see both the price action and the indicator’s outputs simultaneously.
    - **Configuration Limits**: It sets up various limits on how many labels, lines, boxes, and historical bars the indicator can handle at one time.
 
 ### 2. **Multi-timeframe and Price Source Input**
